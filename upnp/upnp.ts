@@ -1,5 +1,3 @@
-#!/usr/bin/env -S deno run -A --unstable-hmr
-
 import {IGD} from './igd.ts'
 import {SSDP, type SSDPOptions} from './ssdp.ts'
 
@@ -158,14 +156,3 @@ export class UPnP {
     }
   }
 }
-
-const upnp = new UPnP()
-
-// await upnp.setMapping({remotePort: 8001, ttl: 200, protocol: 'UDP'})
-// await upnp.setMapping({remotePort: 8000, ttl: 150})
-
-await upnp.unmapAll()
-
-for await (const data of upnp.getMappingIter()) console.log(data)
-
-// console.log(await upnp.getExternalIp())

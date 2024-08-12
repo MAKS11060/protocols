@@ -1,5 +1,3 @@
-#!/usr/bin/env -S deno run -A --unstable-hmr
-
 /**
  * IGD (Internet Gateway Device)
  *
@@ -40,14 +38,18 @@ export class IGD {
 
   constructor(readonly uri: string) {}
 
-  async getService() {
+  async getDevice() {
     const res = await fetch(this.uri)
     const text = await res.text()
     const xml = parse(text)
     const root = xml['root'] as Record<string, any> & {device: Device}
 
+    return this.parseDevice(root.device)
+  }
+
+  async getService() {
     // find service
-    const service = this.parseDevice(root.device)
+    const service = (await this.getDevice())
       .filter((d) => d.kind === 'service')
       .find((d) => this.services.includes(d.serviceType))
 

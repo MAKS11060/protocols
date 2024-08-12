@@ -1,5 +1,3 @@
-#!/usr/bin/env -S deno run -A --unstable-hmr
-
 import {ints} from './os.ts'
 
 const SSDP_ADDR = '239.255.255.250'
@@ -90,9 +88,3 @@ export class SSDP {
     return headers
   }
 }
-
-// const ssdp = new SSDP()
-// console.log(
-//   // await ssdp.search('urn:schemas-upnp-org:device:InternetGatewayDevice:1')
-//   await ssdp.search()
-// )
