@@ -111,7 +111,7 @@ export class UPnP {
   async unmapAll(unmapAll: boolean = false) {
     for (const item of await this.getMapping()) {
       if (!unmapAll && item.description !== this.options?.name) continue
-      await this.unmap({protocol: item.protocol, remotePort: item.remotePort})
+      await this.unmap(item)
     }
   }
 
