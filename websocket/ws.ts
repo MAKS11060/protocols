@@ -9,24 +9,25 @@
  * @module
  */
 
-import {printBuf} from 'https://raw.githubusercontent.com/MAKS11060/deno-libs/main/printBuf.ts'
+import {
+  printBuf,
+  setPrintBufConfig,
+} from 'https://raw.githubusercontent.com/MAKS11060/deno-libs/main/printBuf.ts'
 import {concat} from 'jsr:@std/bytes/concat'
 import {encodeBase64} from 'jsr:@std/encoding/base64'
-import {Buffer} from 'jsr:@std/io/buffer'
 
 printBuf
-Buffer
+setPrintBufConfig({rowLimit: 4})
 
 export type WebSocketData =
   | {type: 'string'; data: string}
   | {type: 'binary'; data: Uint8Array}
 
-type Frame = {
+export type Frame = {
   fin: boolean
   opcode: OpCode
   length: number
   data: Uint8Array
-
   mask: Uint8Array | null
 }
 
@@ -35,6 +36,7 @@ type HandlerWS = (e: WebSocketData) => void
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 
 // const MAX_MESSAGE_SIZE = 0xffff // u16::MAX
+// const MAX_MESSAGE_SIZE = 0xffff_ff
 const MAX_MESSAGE_SIZE = 0xffff_ffff // u32::MAX
 
 enum OpCode {
@@ -102,9 +104,121 @@ const acceptWebSocket = async (conn: Deno.Conn) => {
   return conn
 }
 
-const sendMessage = async (conn: Deno.Conn, message: string | ArrayBuffer) => {
-  if (s.get(conn) !== ReadyState.OPEN) return null
+export const unmask = (payload: Uint8Array, mask: Uint8Array): void => {
+  for (let i = 0; i < payload.length; i++) {
+    payload[i] ^= mask[i & 3]
+  }
+}
 
+export const readFrame = (buf: Uint8Array): Frame => {
+  // https://datatracker.ietf.org/doc/html/rfc6455#section-5.2
+  const fin = (buf[0] & 0b1000_0000) !== 0
+  // const rsv1 = (buf[0] & 0b0100_0000) !== 0
+  // const rsv2 = (buf[0] & 0b0010_0000) !== 0
+  // const rsv3 = (buf[0] & 0b0001_0000) !== 0
+  const opcode: OpCode = buf[0] & 0b0000_1111
+  const masked = (buf[1] & 0b1000_0000) !== 0
+  let payloadLength = buf[1] & 0b0111_1111
+
+  let payloadOffset = 2
+  if (payloadLength === 126) {
+    const view = new DataView(buf.buffer, buf.byteOffset + 2)
+    payloadLength = view.getUint16(0)
+    payloadOffset = 4
+  } else if (payloadLength === 127) {
+    const view = new DataView(buf.buffer, buf.byteOffset + 2)
+    const len = view.getBigUint64(0)
+    if (len > MAX_MESSAGE_SIZE) {
+      throw new Error(
+        `MAX MESSAGE SIZE: current ${len}, expect ${MAX_MESSAGE_SIZE}`
+      )
+    }
+
+    payloadOffset = 10
+    payloadLength = Number(len)
+    // payloadLength = view.getUint32(4) | view.getUint32(0)
+  }
+
+  const mask = masked ? buf.subarray(payloadOffset, payloadOffset + 4) : null
+  const data = buf.subarray(
+    payloadOffset + (masked ? 4 : 0),
+    payloadOffset + (masked ? 4 : 0) + payloadLength
+  )
+
+  const frameLength = payloadOffset + (masked ? 4 : 0) + payloadLength
+
+  return {
+    fin,
+    opcode,
+    length: frameLength, // Общий размер фрейма
+    mask,
+    data,
+  }
+
+  /*  const mask = masked ? buf.subarray(payloadOffset, payloadOffset + 4) : null
+  const data = buf.subarray(
+    payloadOffset + (masked ? 4 : 0),
+    payloadOffset + (masked ? 4 : 0) + payloadLength
+  )
+
+  return {
+    fin,
+    opcode,
+    length: payloadLength + (masked ? 4 : 0) + 2, // Общий размер фрейма
+    mask,
+    data,
+  } */
+
+  // return {
+  //   fin,
+  //   opcode,
+  //   length: payloadLength,
+  //   mask: masked ? buf.subarray(payloadOffset, payloadOffset + 4) : null,
+  //   data: buf.subarray(
+  //     payloadOffset + (masked ? 4 : 0),
+  //     payloadOffset + (masked ? 4 : 0) + payloadLength
+  //   ),
+  // }
+}
+
+export const readFrameHeader = (buf: Uint8Array): Omit<Frame, 'data'> => {
+  // https://datatracker.ietf.org/doc/html/rfc6455#section-5.2
+  const fin = (buf[0] & 0b1000_0000) !== 0
+  // const rsv1 = (buf[0] & 0b0100_0000) !== 0
+  // const rsv2 = (buf[0] & 0b0010_0000) !== 0
+  // const rsv3 = (buf[0] & 0b0001_0000) !== 0
+  const opcode: OpCode = buf[0] & 0b0000_1111
+  const masked = (buf[1] & 0b1000_0000) !== 0
+  let payloadLength = buf[1] & 0b0111_1111
+
+  let payloadOffset = 2
+  if (payloadLength === 126) {
+    const view = new DataView(buf.buffer, buf.byteOffset + 2)
+    payloadLength = view.getUint16(0)
+    payloadOffset = 4
+  } else if (payloadLength === 127) {
+    const view = new DataView(buf.buffer, buf.byteOffset + 2)
+    const len = view.getBigUint64(0)
+    if (len > MAX_MESSAGE_SIZE) {
+      throw new Error(
+        `MAX MESSAGE SIZE: current ${len}, expect ${MAX_MESSAGE_SIZE}`
+      )
+    }
+
+    payloadOffset = 10
+    payloadLength = Number(len)
+    // payloadLength = view.getUint32(4) | view.getUint32(0)
+  }
+
+  return {
+    fin,
+    opcode,
+    length: payloadLength,
+    mask: masked ? buf.subarray(payloadOffset, payloadOffset + 4) : null,
+  }
+}
+
+const sendMessage = async (conn: Deno.Conn, message: string | ArrayBuffer) => {
   if (message instanceof Uint8Array) {
     const maxPayloadSize = 125
     const numChunks = Math.ceil(message.length / maxPayloadSize)
@@ -138,63 +252,6 @@ const sendMessage = async (conn: Deno.Conn, message: string | ArrayBuffer) => {
   await conn.write(packet)
 }
 
-const unmask = (payload: Uint8Array, mask: Uint8Array): void => {
-  for (let i = 0; i < payload.length; i++) {
-    payload[i] ^= mask[i & 3]
-  }
-}
-
-const readFrame = (buf: Uint8Array): Frame => {
-  // https://datatracker.ietf.org/doc/html/rfc6455#section-5.2
-  const fin = (buf[0] & 0b1000_0000) !== 0
-  // const rsv1 = (buf[0] & 0b0100_0000) !== 0
-  // const rsv2 = (buf[0] & 0b0010_0000) !== 0
-  // const rsv3 = (buf[0] & 0b0001_0000) !== 0
-  const opcode: OpCode = buf[0] & 0b0000_1111
-  const masked = (buf[1] & 0b1000_0000) !== 0
-  let payloadLength = buf[1] & 0b0111_1111
-
-  let payloadOffset = 2
-  if (payloadLength === 126) {
-    const view = new DataView(buf.buffer, buf.byteOffset + 2)
-    payloadLength = view.getUint16(0)
-    payloadOffset = 4
-  } else if (payloadLength === 127) {
-    const view = new DataView(buf.buffer, buf.byteOffset + 2)
-    const len = view.getBigUint64(0)
-    if (len > MAX_MESSAGE_SIZE) {
-      throw new Error(`MAX MESSAGE SIZE: ${MAX_MESSAGE_SIZE}`)
-    }
-
-    payloadOffset = 10
-    payloadLength = Number(len)
-    // payloadLength = view.getUint32(4) | view.getUint32(0)
-  }
-
-  // if (masked) {
-  //   const maskingKey = buf.subarray(payloadOffset, payloadOffset + 4)
-  //   payloadOffset += 4
-
-  //   for (let i = payloadOffset; i < payloadOffset + payloadLength; i++) {
-  //     buf[i] ^= maskingKey[(i - payloadOffset) % 4]
-  //   }
-  // }
-
-  // if (masked) payloadOffset += 4
-
-  return {
-    fin,
-    opcode,
-    length: payloadLength,
-    // data: buf.subarray(payloadOffset, payloadOffset + payloadLength),
-    mask: masked ? buf.subarray(payloadOffset, payloadOffset + 4) : null,
-    data: buf.subarray(
-      payloadOffset + (masked ? 4 : 0),
-      payloadOffset + (masked ? 4 : 0) + payloadLength
-    ),
-  }
-}
-
 const sendClose = async (conn: Deno.Conn, code = 1000, reason?: string) => {
   new DataView(new Uint8Array(2).buffer).setUint8(0, OpCode.Close)
 
@@ -212,335 +269,300 @@ const sendClose = async (conn: Deno.Conn, code = 1000, reason?: string) => {
   await conn.write(header)
 }
 
-const s = new WeakMap<Deno.Conn, ReadyState>()
-
-export const handleWebSocket = async (conn: Deno.Conn, handler: HandlerWS) => {
-  let currentMessage = new Uint8Array()
-  let nextFrame = new Uint8Array()
-  s.set(conn, ReadyState.OPEN)
-
-  for await (const c of conn.readable) {
-    while (true) {
-      // const {fin, opcode, data} = readFrame(c)
-      const {fin, opcode, data} = readFrame(
-        nextFrame.byteLength ? nextFrame : c
-      )
-      nextFrame = new Uint8Array()
-
-      // console.log('c')
-      // printBuf(c)
-      console.log(`FIN: ${Number(fin)} OpCode: ${OpCode[opcode]}`)
-      // printBuf(data)
-      // console.log('next frame')
-      // printBuf(c.subarray(data.byteOffset + data.byteLength))
-
-      if (opcode === OpCode.ContinuationFrame) {
-        if (fin) currentMessage = new Uint8Array()
-        else currentMessage = concat([currentMessage, data])
-      } else if (opcode === OpCode.TextFrame) {
-        if (fin) {
-          handler({type: 'string', data: decoder.decode(data)})
-          currentMessage = new Uint8Array()
-        } else currentMessage = data
-      } else if (opcode === OpCode.BinaryFrame) {
-        if (fin) {
-          handler({type: 'binary', data})
-          currentMessage = new Uint8Array()
-        } else currentMessage = data
-      } else if (opcode === OpCode.PingFrame) {
-        await conn.write(new Uint8Array([0x8a, data.length, ...data]))
-      } else if (opcode === OpCode.PongFrame) {
-        //
-      } else if (opcode === OpCode.Close) {
-        s.set(conn, ReadyState.CLOSING)
-
-        break
-      }
-
-      nextFrame = c.subarray(data.byteOffset + data.byteLength)
-    }
-  }
-
-  // if (s.get(conn) === ReadyState.CLOSING) {
-  // conn.close()
-  // s.set(conn, ReadyState.CLOSED)
-  // }
-}
-
-export const handleWebSocketStream_ = async (conn: Deno.Conn) => {
-  const sock = await acceptWebSocket(conn)
-
-  let prevFrame: Frame | null = null
-  let payload = new Uint8Array()
-  let bytesRead = 0
-
-  const toWebSocket = new TransformStream<Uint8Array, WebSocketData>({
-    transform(chunk, controller) {
-      if (!prevFrame) {
-        const frame = readFrame(chunk)
-        console.log(`FIN: ${Number(frame.fin)} OpCode: ${OpCode[frame.opcode]}`)
-
-        // const frameEnd = frame.data.byteOffset + frame.data.byteLength
-        // const isEnd = frameEnd === chunk.byteLength
-
-        const isEnd = frame.length === frame.data.byteLength
-        // console.log({isEnd}, frame.length, frame.data.byteLength)
-
-        if (!isEnd) {
-          prevFrame = frame // save frame
-          bytesRead += frame.data.byteLength
-        } else {
-          // controller.enqueue({type: 'binary', data: frame.data})
-        }
-      } else {
-        // let n = chunk.byteLength >
-
-        prevFrame.data = concat([prevFrame.data, chunk])
-
-        const isEnd = prevFrame.length === prevFrame.data.byteLength
-        if (isEnd) {
-          if (prevFrame.mask) {
-            unmask(prevFrame.data.subarray(0, prevFrame.length), prevFrame.mask)
-          }
-
-          const endFrame = prevFrame.data.byteOffset
-          console.log(endFrame)
-        } else {
-        }
-
-        console.log(prevFrame)
-      }
-
-      // printBuf(chunk.subarray(0, 64))
-      // console.log('c:', chunk.byteLength)
-      // console.log(`FIN: ${Number(frame.fin)} OpCode: ${OpCode[frame.opcode]}`)
-      // console.log(`payload: ${frame.length}`)
-    },
-  })
-
-  // let currentOpcode: OpCode | null = null
-  // let buf = new Uint8Array()
-  // let n = 0
-
-  // const toWebSocket = new TransformStream<Uint8Array, WebSocketData>({
-  //   /* transform(chunk, controller) {
-  //     // printBuf(chunk)
-  //     console.log('write')
-
-  //     // const frame = readFrame(chunk)
-  //     // let frameEnd = frame.data.byteOffset + frame.data.byteLength
-  //     // let isEnd = frameEnd === chunk.byteLength
-
-  //     // controller.enqueue(frame) // write first frame
-  //     let isEnd = false
-  //     let frameEnd = 0
-  //     while (!isEnd) {
-  //       const frame = readFrame(chunk.subarray(frameEnd))
-  //       frameEnd = frame.data.byteOffset + frame.data.byteLength
-  //       isEnd = frameEnd === chunk.byteLength
-
-  //       // console.log(`FIN: ${Number(frame.fin)} OpCode: ${OpCode[frame.opcode]}`)
-  //       // controller.enqueue(frame)
-  //     }
-  //   }, */
-  //   transform(chunk, controller) {
-  //     const frame = readFrame(chunk)
-  //     console.log(
-  //       `FIN: ${Number(frame.fin)} OpCode: ${OpCode[frame.opcode]} `,
-  //       `size: ${frame.length} byte: ${frame.data.byteLength}`
-  //     )
-
-  //     // while (true) {
-  //     //   if (!currentOpcode) {
-  //     //     const frame = readFrame(chunk)
-  //     //     const frameEnd = frame.data.byteOffset + frame.data.byteLength
-  //     //     const isEnd = frameEnd === chunk.byteLength
-
-  //     //     if (isEnd) {
-  //     //       controller.enqueue({type: 'binary', data: frame.data})
-  //     //     } else {
-  //     //       currentOpcode = frame.opcode
-
-  //     //       // controller.enqueue({type: 'binary', data: frame.data})
-  //     //     }
-  //     //   }
-
-  //     //   if (currentOpcode === OpCode.ContinuationFrame) {
-
-  //     //   }
-  //     // }
-
-  //     // while (!isEnd) {
-  //     //   if (!isEnd) {
-  //     //     const frame = readFrame(chunk)
-  //     //     let frameEnd = frame.data.byteOffset + frame.data.byteLength
-  //     //     isEnd = frameEnd === chunk.byteLength
-
-  //     //     if (isEnd) controller.enqueue({type: 'binary', data: frame.data})
-  //     //     else {
-  //     //       buf = new Uint8Array(frame.length)
-  //     //       buf.set(frame.data.subarray(0, frameEnd), 0)
-  //     //       console.log('alloc', frame.length)
-  //     //       currentOpcode = frame.opcode
-  //     //     }
-  //     //   } else {
-  //     //     console.log(buf.byteLength)
-  //     //     break
-  //     //   }
-  //     // }
-  //   },
-  // })
-
-  return sock.readable.pipeThrough(toWebSocket)
-}
 
 export const handleWebSocketStream = async (conn: Deno.Conn) => {
   const sock = await acceptWebSocket(conn)
 
-  let currFrame: Frame | null = null
-  let payload = new Uint8Array()
-  let readBytes = 0
-  let remainingChunk = new Uint8Array()
+  {
+    let buffer = new Uint8Array(0)
 
-  const toWebSocketFrame = new TransformStream<Uint8Array, Frame>({
-    transform(chunk, controller) {
-      while (true) {
-        if (!currFrame) {
-          const frame = readFrame(concat([remainingChunk, chunk]))
-          if (frame.length > MAX_MESSAGE_SIZE) {
-            throw new Error(`MAX MESSAGE SIZE is ${MAX_MESSAGE_SIZE}`)
+    const toWebSocketFrame = new TransformStream<Uint8Array, Frame>({
+      transform(chunk, controller) {
+        buffer = new Uint8Array([...buffer, ...chunk])
+        // printBuf(buffer)
+
+        while (buffer.length > 0) {
+          try {
+            const frame = readFrame(buffer)
+            if (buffer.length >= frame.length) {
+              unmask(frame.data, frame.mask!)
+              controller.enqueue(frame)
+              buffer = buffer.subarray(frame.length)
+            } else {
+              break // Недостаточно данных для полного фрейма
+            }
+          } catch (error) {
+            controller.error(error)
+            break
           }
+        }
 
-          // if full payload
-          if (frame.data.byteLength === frame.length) {
-            if (frame.mask) unmask(frame.data, frame.mask)
-            controller.enqueue(frame)
-          }
+        // // Если у нас есть ожидаемый размер фрейма, добавляем данные в буфер
+        // if (expectedFrameLength > 0) {
+        //   buffer = new Uint8Array([...buffer, ...chunk])
+        //   if (buffer.length >= expectedFrameLength) {
+        //     const frame = readFrame(buffer)
+        //     controller.enqueue(frame)
+        //     buffer = buffer.subarray(expectedFrameLength)
+        //     expectedFrameLength = 0 // Сбрасываем ожидаемый размер фрейма
+        //   }
+        // } else {
+        //   // Если у нас нет ожидаемого размера фрейма, пытаемся прочитать первый фрейм
+        //   try {
+        //     const frame = readFrame(chunk)
+        //     expectedFrameLength = frame.length
+        //     buffer = new Uint8Array(expectedFrameLength)
+        //     buffer.set(chunk.subarray(0, chunk.length))
+        //   } catch (error) {
+        //     // Если произошла ошибка, возможно, данных недостаточно для полного фрейма
+        //     buffer = new Uint8Array([...buffer, ...chunk])
+        //   }
+        // }
+      },
+    })
 
-          const frameEnd = frame.data.byteOffset + frame.data.byteLength
-          if (chunk.byteLength !== frameEnd) {
-            remainingChunk = chunk.subarray(frameEnd) // save next frame
-          }
+    const readable = sock.readable.pipeThrough(toWebSocketFrame)
+    return {readable}
+  }
 
-          if (remainingChunk.byteLength > 0) {
-            // chunk = remainingChunk
-            remainingChunk = new Uint8Array()
-            // continue
-          }
+  {
+    const b = new Uint8Array(32)
+    const buf = new Buffer(b)
 
-          if (currFrame === null) {
-            payload = new Uint8Array(frame.length) // alloc for payload
-            payload.set(frame.data, 0) // set first segment
-            readBytes += frame.data.byteLength
-            currFrame = frame // save frame
-            console.log(payload.byteLength)
-            return // next chunk
-          }
-        } else if (currFrame) {
-          const remainingBytes = currFrame.length - readBytes
-          const bytesToCopy = Math.min(remainingBytes, chunk.length)
-          payload.set(chunk.subarray(0, bytesToCopy), readBytes)
-          readBytes += bytesToCopy
+    await buf.readFrom(sock)
 
-          if (readBytes === currFrame.length) {
-            console.log('read full')
-            if (currFrame.mask) unmask(payload, currFrame.mask)
-            // console.log(payload.byteLength)
-            controller.enqueue({...currFrame, data: payload})
+    printBuf(buf.bytes())
 
-            // reset
-            currFrame = null
-            payload = new Uint8Array()
+    // const buf = new Uint8Array(32)
+    // let n = await sock.read(buf)
+
+    // const frame = readFrameHeader(buf)
+    // let headerEnd = frame.mask?.byteOffset! + 4
+
+    // const payload = new Uint8Array(frame.length) // alloc payload
+    // payload.set(buf.subarray(headerEnd, headerEnd + frame.length))
+    // unmask(payload, frame.mask!)
+    // printBuf(buf)
+
+    // const reader = sock.readable.getReader()
+    // const data = await reader.read()
+
+    // const toWebSocketFrame = new TransformStream<Uint8Array, Frame>({
+    //   transform(chunk, controller) {
+    //     printBuf(chunk)
+    //     const frame = readFrameHeader(chunk)
+    //     console.log(frame)
+    //   },
+    // })
+    // const readable = sock.readable.pipeThrough(toWebSocketFrame)
+    // return {readable}
+    return {}
+  }
+
+  {
+    let currFrame: Frame | null = null
+    let payload = new Uint8Array()
+    let readBytes = 0
+
+    const toWebSocketFrame = new TransformStream<Uint8Array, Frame>({
+      transform(chunk, controller) {
+        // printBuf(chunk)
+
+        let offset = 0
+        while (offset < chunk.byteLength) {
+          if (!currFrame) {
+            currFrame = readFrame(chunk.subarray(offset))
+            payload = new Uint8Array(currFrame.length)
             readBytes = 0
           }
 
-          if (chunk.byteLength > bytesToCopy) {
-            remainingChunk = chunk.subarray(bytesToCopy) // save data for next iter
-          }
+          const remainingBytes = currFrame.length - readBytes
+          const bytesToCopy = Math.min(
+            remainingBytes,
+            chunk.byteLength - offset
+          )
+          payload.set(
+            currFrame.data.subarray(readBytes, readBytes + bytesToCopy),
+            readBytes
+          )
+          readBytes += bytesToCopy
+          // offset = currFrame.data.byteOffset + currFrame.data.byteLength
+          if (readBytes === currFrame.length) {
+            if (currFrame.mask) unmask(payload, currFrame.mask)
+            offset = currFrame.data.byteOffset + currFrame.data.byteLength
+            // offset = chunk.byteLength
 
-          if (remainingChunk.byteLength > 0) {
-            chunk = remainingChunk
-            remainingChunk = new Uint8Array()
-            continue
+            controller.enqueue({...currFrame, data: payload})
+            currFrame = null
+            payload = new Uint8Array()
+            readBytes = 0
+          } else {
+            offset += bytesToCopy
           }
-
-          return
+          // console.log({offset, bytesToCopy})
         }
-      }
-    },
-  })
+      },
+    })
 
-  const toWebSocketResult = new TransformStream<Frame, Uint8Array>({
-    transform(chunk, controller) {
-      const {fin, opcode, data} = chunk
+    const readable = sock.readable.pipeThrough(toWebSocketFrame)
+    return {readable}
+  }
 
-      if (opcode === OpCode.ContinuationFrame) {
-        // if (fin) currentMessage = new Uint8Array()
-        // else currentMessage = concat([currentMessage, data])
-      } else if (opcode === OpCode.TextFrame) {
-        // if (fin) {
-        // handler({type: 'string', data: decoder.decode(data)})
-        // currentMessage = new Uint8Array()
-        // } else currentMessage = data
-      } else if (opcode === OpCode.BinaryFrame) {
-        // if (fin) {
-        // handler({type: 'binary', data})
-        // currentMessage = new Uint8Array()
-        // } else currentMessage = data
-      } else if (opcode === OpCode.PingFrame) {
-        controller.enqueue(new Uint8Array([0x8a, data.length, ...data]))
-      } else if (opcode === OpCode.PongFrame) {
-        //
-      } else if (opcode === OpCode.Close) {
-        controller.terminate()
-      }
-    },
-  })
+  {
+    let currFrame: Frame | null = null
+    let payload = new Uint8Array()
+    let readBytes = 0
+    let remainingChunk = new Uint8Array()
 
-  const readable = sock.readable.pipeThrough(toWebSocketFrame)
+    const toWebSocketFrame = new TransformStream<Uint8Array, Frame>({
+      transform(chunk, controller) {
+        while (true) {
+          if (!currFrame) {
+            const frame = readFrame(concat([remainingChunk, chunk]))
+            if (frame.length > MAX_MESSAGE_SIZE) {
+              throw new Error(`MAX MESSAGE SIZE is ${MAX_MESSAGE_SIZE}`)
+            }
 
-  const writable = new WritableStream<Uint8Array | string>({
-    write(chunk, controller) {
-      console.log('w', chunk)
-    },
-  })
+            // if full payload
+            if (frame.data.byteLength === frame.length) {
+              if (frame.mask) unmask(frame.data, frame.mask)
+              controller.enqueue(frame)
+            }
 
-  return {readable, writable}
+            const frameEnd = frame.data.byteOffset + frame.data.byteLength
+            if (chunk.byteLength !== frameEnd) {
+              remainingChunk = chunk.subarray(frameEnd) // save next frame
+            }
+
+            if (remainingChunk.byteLength > 0) {
+              // chunk = remainingChunk
+              remainingChunk = new Uint8Array()
+              // continue
+            }
+
+            if (currFrame === null) {
+              payload = new Uint8Array(frame.length) // alloc for payload
+              payload.set(frame.data, 0) // set first segment
+              readBytes += frame.data.byteLength
+              currFrame = frame // save frame
+              console.log(payload.byteLength)
+              return // next chunk
+            }
+          } else if (currFrame) {
+            const remainingBytes = currFrame.length - readBytes
+            const bytesToCopy = Math.min(remainingBytes, chunk.length)
+            payload.set(chunk.subarray(0, bytesToCopy), readBytes)
+            readBytes += bytesToCopy
+
+            if (readBytes === currFrame.length) {
+              console.log('read full')
+              if (currFrame.mask) unmask(payload, currFrame.mask)
+              // console.log(payload.byteLength)
+              controller.enqueue({...currFrame, data: payload})
+
+              // reset
+              currFrame = null
+              payload = new Uint8Array()
+              readBytes = 0
+            }
+
+            if (chunk.byteLength > bytesToCopy) {
+              remainingChunk = chunk.subarray(bytesToCopy) // save data for next iter
+            }
+
+            if (remainingChunk.byteLength > 0) {
+              chunk = remainingChunk
+              remainingChunk = new Uint8Array()
+              continue
+            }
+
+            return
+          }
+        }
+      },
+    })
+
+    const toWebSocketResult = new TransformStream<Frame, Uint8Array>({
+      transform(chunk, controller) {
+        const {fin, opcode, data} = chunk
+
+        if (opcode === OpCode.ContinuationFrame) {
+          // if (fin) currentMessage = new Uint8Array()
+          // else currentMessage = concat([currentMessage, data])
+        } else if (opcode === OpCode.TextFrame) {
+          // if (fin) {
+          // handler({type: 'string', data: decoder.decode(data)})
+          // currentMessage = new Uint8Array()
+          // } else currentMessage = data
+        } else if (opcode === OpCode.BinaryFrame) {
+          // if (fin) {
+          // handler({type: 'binary', data})
+          // currentMessage = new Uint8Array()
+          // } else currentMessage = data
+        } else if (opcode === OpCode.PingFrame) {
+          controller.enqueue(new Uint8Array([0x8a, data.length, ...data]))
+        } else if (opcode === OpCode.PongFrame) {
+          //
+        } else if (opcode === OpCode.Close) {
+          controller.terminate()
+        }
+      },
+    })
+
+    const readable = sock.readable.pipeThrough(toWebSocketFrame)
+    const writable = new WritableStream<Uint8Array | string>({
+      write(chunk, controller) {
+        console.log('w', chunk)
+      },
+    })
+
+    return {readable, writable}
+  }
 }
 
-serve(async (conn: Deno.Conn) => {
-  const {readable} = await handleWebSocketStream(conn)
-  for await (const frame of readable) {
-    // console.log(frame)
-    // printBuf(frame.data.subarray(0, 64))
-    console.log(
-      [
-        `FIN: ${Number(frame.fin)} OpCode: ${OpCode[frame.opcode]}`,
-        `bytes: ${frame.length}  payload: ${frame.data.byteLength}`,
-      ].join('    ')
-    )
-  }
-})
+if (import.meta.main) {
+  serve(async (conn: Deno.Conn) => {
+    const {readable} = await handleWebSocketStream(conn)
+    for await (const frame of readable!) {
+      console.log(
+        [
+          `FIN: ${Number(frame.fin)} OpCode: ${OpCode[frame.opcode]}`,
+          `bytes: ${frame.length} (${frame.length.toString(16)})  payload: ${
+            frame.data.byteLength
+          }(${frame.data.byteLength.toString(16)})`,
+        ].join('    ')
+      )
+      printBuf(frame.data, {rowLimit: 2})
+    }
+  })
 
-const client = new WebSocketStream('ws://localhost:8000')
-const {writable, readable} = await client.opened
-const writer = writable.getWriter()
-await writer.write(new Uint8Array(10))
-await writer.write(new Uint8Array(0xff))
-await writer.write(new Uint8Array(0xffff))
-// await writer.write(new Uint8Array(0x8).map((v) => 0xff))
-// await writer.write(new Uint8Array(0xffff).map((v) => 0xff))
+  const client = new WebSocketStream('ws://localhost:8000')
+  const {writable, readable} = await client.opened
+  const writer = writable.getWriter()
+  await writer.write(new Uint8Array([1, 2]))
+  await writer.write(new Uint8Array([3, 4]))
+  await writer.write(new Uint8Array(1))
+  await writer.write(new Uint8Array(10))
+  await writer.write(new Uint8Array(10))
+  await writer.write(new Uint8Array(0xff))
+  await writer.write(new Uint8Array(0xffff))
+  await writer.write(new Uint8Array(0xfffff))
+  await writer.write(new Uint8Array(0xffff + 32))
+  await writer.write(new Uint8Array(0x8).map((v) => 0xff))
+  await writer.write(new Uint8Array(0xffff).map((v) => 0xff))
+  await writer.write('text frame')
 
-// readable.pipeTo(
-//   new WritableStream({
-//     write(data) {
-//       console.log({data})
-//     },
-//   })
-// )
+  // readable.pipeTo(
+  //   new WritableStream({
+  //     write(data) {
+  //       console.log({data})
+  //     },
+  //   })
+  // )
 
-client.close()
-// setTimeout(() => client.close(), 0)
+  // client.close()
+  // setTimeout(() => client.close(), 0)
+}
 
 // const client = new WebSocket('ws://localhost:8000')
 // client.onopen = (e) => {
