@@ -8,10 +8,6 @@
  */
 
 import {
-  printBuf,
-  setPrintBufConfig,
-} from 'https://raw.githubusercontent.com/MAKS11060/deno-libs/main/printBuf.ts'
-import {
   Frame,
   OpCode,
   acceptWebSocket,
@@ -19,9 +15,6 @@ import {
   readFrame,
   unmask,
 } from './ws-utils.ts'
-
-setPrintBufConfig({rowLimit: 4})
-printBuf
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
@@ -42,7 +35,7 @@ const transformWebsocketToFrame = () => {
             controller.enqueue(frame)
             buffer = buffer.subarray(frame.frameLength) // next frame
           } else {
-            break // Недостаточно данных для полного фрейма
+            break // collect full frame
           }
         } catch (error) {
           controller.error(error)
@@ -51,30 +44,57 @@ const transformWebsocketToFrame = () => {
       }
     },
     flush(controller) {
-      console.log('f')
+      // console.log('f')
     },
     cancel() {
-      console.log('c')
+      // console.log('c')
     },
   })
 }
 
 // frame -> result
-const frameToResult = () => {
-  // let data: Uint8Array = new Uint8Array()
+const transformFrameToResult = () => {
+  let continuationData = new Uint8Array()
+  let continuationOpcode: OpCode | null = null
+
   return new TransformStream<Frame, string | Uint8Array>({
     transform(frame, controller) {
       if (frame.opcode === OpCode.ContinuationFrame) {
-        // TODO
-        return
-      }
+        if (continuationOpcode === null) {
+          throw new Error('Received continuation frame without initial frame')
+        }
+        continuationData = new Uint8Array([...continuationData, ...frame.data])
+        if (frame.fin) {
+          if (continuationOpcode === OpCode.Text) {
+            controller.enqueue(decoder.decode(frame.data))
+          } else if (continuationOpcode === OpCode.Binary) {
+            controller.enqueue(frame.data)
+          }
+          continuationData = new Uint8Array()
+          continuationOpcode = 0
+        }
+      } else {
+        if (continuationOpcode !== null) {
+          throw new Error(
+            'Received new frame before finishing continuation frames'
+          )
+        }
 
-      if (frame.opcode === OpCode.Text) {
-        controller.enqueue(decoder.decode(frame.data))
-      } else if (frame.opcode === OpCode.Binary) {
-        controller.enqueue(frame.data)
-      } else if (frame.opcode === OpCode.Close) {
-        controller.terminate()
+        if (frame.opcode === OpCode.Text || frame.opcode === OpCode.Binary) {
+          continuationOpcode = frame.opcode
+          continuationData = frame.data
+          if (frame.fin) {
+            if (frame.opcode === OpCode.Text) {
+              controller.enqueue(new TextDecoder().decode(continuationData))
+            } else if (frame.opcode === OpCode.Binary) {
+              controller.enqueue(continuationData)
+            }
+            continuationData = new Uint8Array(0)
+            continuationOpcode = null
+          }
+        } else if (frame.opcode === OpCode.Close) {
+          controller.terminate()
+        }
       }
     },
   })
@@ -99,10 +119,10 @@ const transformDataToWebsocket = () => {
       controller.enqueue(frame)
     },
     flush(controller) {
-      console.log('flush')
+      // console.log('flush')
     },
     cancel() {
-      console.log('cancel')
+      // console.log('cancel')
     },
   })
 }
@@ -113,7 +133,7 @@ export const handleWebSocketStream = async (conn: Deno.Conn) => {
   // socket -> frame -> result
   const readable = sock.readable
     .pipeThrough(transformWebsocketToFrame())
-    .pipeThrough(frameToResult())
+    .pipeThrough(transformFrameToResult())
 
   // writable -> frame -> socket
   const frameWriter = transformDataToWebsocket()
