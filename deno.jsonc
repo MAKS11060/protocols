@@ -1,7 +1,9 @@
 {
   "lock": false,
+  "imports": {
+    "@libs/xml": "jsr:@libs/xml@^5.4.13"
+  },
   "unstable": [
     "net"
-  ],
-  "imports": { "@libs/xml": "jsr:@libs/xml@^5.4.13" }
+  ]
 }
