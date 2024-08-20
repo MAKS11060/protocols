@@ -47,3 +47,46 @@ const stun = new STUN('stun.l.google.com:19302')
 
 console.log(await stun.getMappedAddress()) // { hostname: "178.68.144.103", port: 49646, family: "IPv4" }
 ```
+
+## [WebSocket Stream Server (RFC 6455)](https://datatracker.ietf.org/doc/html/rfc6455)
+
+Implementing Websocket as a [WebSocketStream](https://github.com/ricea/websocketstream-explainer) server using [StreamApi](https://developer.mozilla.org/en-US/docs/Web/API/Streams_API)
+
+Usage:
+
+```ts
+#!/usr/bin/env -S deno run -A --unstable-hmr
+
+import {handleWebSocketStream} from 'https://raw.githubusercontent.com/MAKS11060/deno-protocols/main/websocket/ws.ts'
+
+const serve = async (handler: (conn: Deno.Conn) => Promise<void>) => {
+  const listener = Deno.listen({port: 8000})
+  for await (const conn of listener) {
+    try {
+      handler(conn).catch((e) => {
+        console.error('err', e)
+      })
+    } catch (e) {
+      console.error(e)
+    }
+  }
+}
+
+serve(async (conn) => {
+  const {readable, writable, headers, url} = await handleWebSocketStream(conn)
+  console.log({headers, url})
+  const writer = writable.getWriter()
+  for await (const data of readable) {
+    if (typeof data === 'string') {
+      console.log('server:', data)
+    } else {
+      console.log('server:', data.byteLength)
+    }
+    writer.write(data) // write to client received data
+  }
+  console.log('readable closed')
+
+  writer.releaseLock()
+  writable.close()
+})
+```
