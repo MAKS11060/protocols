@@ -2,6 +2,15 @@
 
 ## UPnP Client
 
+The UPnP Client provides a simple interface for managing network port mappings.
+
+### Methods
+- `getExternalIp()`: Returns the public IP address.
+- `setMapping(options)`: Opens a port with the specified options.
+- `getMapping()`: Returns a list of all current port mappings.
+- `unmap(options)`: Removes a port mapping with the specified options.
+- `unmapAll()`: Removes all port mappings.
+
 Usage:
 
 ```ts
