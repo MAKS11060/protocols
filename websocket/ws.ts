@@ -47,7 +47,7 @@ const transformWebsocketToFrame = () => {
       // console.log('f')
     },
     cancel() {
-      // console.log('c')
+      // console.log('client close conn')
     },
   })
 }
@@ -75,9 +75,7 @@ const transformFrameToResult = () => {
         }
       } else {
         if (continuationOpcode !== null) {
-          throw new Error(
-            'Received new frame before finishing continuation frames'
-          )
+          throw new Error('Received new frame before finishing continuation frames')
         }
 
         if (frame.opcode === OpCode.Text || frame.opcode === OpCode.Binary) {
@@ -127,8 +125,8 @@ const transformDataToWebsocket = () => {
   })
 }
 
-export const handleWebSocketStream = async (conn: Deno.Conn) => {
-  const sock = await acceptWebSocket(conn)
+export const handleWebSocketStream = async (conn: Deno.Conn, protocol?: string) => {
+  const {conn: sock, headers, url} = await acceptWebSocket(conn, protocol)
 
   // socket -> frame -> result
   const readable = sock.readable
@@ -139,5 +137,5 @@ export const handleWebSocketStream = async (conn: Deno.Conn) => {
   const frameWriter = transformDataToWebsocket()
   frameWriter.readable.pipeTo(sock.writable)
 
-  return {readable, writable: frameWriter.writable}
+  return {readable, writable: frameWriter.writable, headers, url}
 }

@@ -1,6 +1,6 @@
 # Implementation of simple protocols in typescript
 
-## UPnP Client
+## [UPnP Client (RFC 6970)](https://datatracker.ietf.org/doc/html/rfc6970)
 
 The UPnP Client provides a simple interface for managing network port mappings.
 

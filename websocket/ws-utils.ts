@@ -28,20 +28,27 @@ const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 
 export const genAcceptKey = async (key: string | null) => {
-  return encodeBase64(
-    await crypto.subtle.digest('SHA-1', encoder.encode(key + GUID))
-  )
+  return encodeBase64(await crypto.subtle.digest('SHA-1', encoder.encode(key + GUID)))
 }
 
-export const acceptWebSocket = async (conn: Deno.Conn) => {
-  const httpBuf = new Uint8Array(1024)
+export const acceptWebSocket = async (conn: Deno.Conn | Deno.TlsConn, protocol?: string) => {
+  const isTls = Boolean((conn as Deno.TlsConn).handshake)
+  const httpBuf = new Uint8Array(2048)
   let n = await conn.read(httpBuf)
-  const headers = new Headers()
 
-  for (const line of new TextDecoder().decode(httpBuf).split('\r\n')) {
-    const [key, value] = line.split(': ')
+  // Parse headers
+  const headers = new Headers()
+  const lines = new TextDecoder().decode(httpBuf).split('\r\n')
+  const [method, path, version] = lines.at(0)?.split(' ', 3)!
+  // console.log({method, path, version})
+  for (const line of lines) {
+    const [key, value] = line.split(': ', 2)
     if (key && value) headers.set(key, value)
   }
+  const url = new URL(
+    path,
+    (isTls ? 'wss://' : 'ws://') + headers.get('host') ?? 'localhost'
+  ).toString()
 
   const key = headers.get('sec-websocket-key')
   if (!key) {
@@ -58,8 +65,16 @@ export const acceptWebSocket = async (conn: Deno.Conn) => {
     'Sec-WebSocket-Version: 13',
   ]
 
+  // Protocol negotiation
+  const proto = headers.get('sec-websocket-protocol')
+  if (protocol && proto) {
+    for (const item of proto.split(',')) {
+      if (protocol === item.trim()) acceptHeaders.push(`Sec-WebSocket-protocol: ${item}`)
+    }
+  }
+
   await conn.write(encoder.encode(acceptHeaders.concat('\r\n').join('\r\n')))
-  return conn
+  return {conn, headers, url}
 }
 
 export const unmask = (payload: Uint8Array, mask: Uint8Array): void => {
@@ -87,9 +102,7 @@ export const readFrame = (buf: Uint8Array): Frame => {
     const view = new DataView(buf.buffer, buf.byteOffset + 2)
     const len = view.getBigUint64(0)
     if (len > MAX_MESSAGE_SIZE) {
-      throw new Error(
-        `MAX MESSAGE SIZE: current ${len}, expect ${MAX_MESSAGE_SIZE}`
-      )
+      throw new Error(`MAX MESSAGE SIZE: current ${len}, expect ${MAX_MESSAGE_SIZE}`)
     }
     payloadOffset = 10
     payloadLength = Number(len)
@@ -135,14 +148,9 @@ export const sendMessage = async (conn: Deno.Conn, message: string | ArrayBuffer
   }
 
   const data =
-    typeof message === 'string'
-      ? new TextEncoder().encode(message)
-      : new Uint8Array(message)
+    typeof message === 'string' ? new TextEncoder().encode(message) : new Uint8Array(message)
 
-  const header = new Uint8Array([
-    typeof message === 'string' ? 0x81 : 0x82,
-    data.length,
-  ])
+  const header = new Uint8Array([typeof message === 'string' ? 0x81 : 0x82, data.length])
   const packet = new Uint8Array([...header, ...data])
   await conn.write(packet)
 }
@@ -184,22 +192,15 @@ export const createWebSocketFrame = (
   const frame = new Uint8Array(frameLength)
 
   frame[0] = (fin ? 0b1000_0000 : 0) | opcode
-  frame[1] =
-    (mask ? 0b1000_0000 : 0) | (payloadLength < 126 ? payloadLength : 126)
+  frame[1] = (mask ? 0b1000_0000 : 0) | (payloadLength < 126 ? payloadLength : 126)
 
   let offset = 2
   if (payloadLength >= 126) {
     if (payloadLength < 65536) {
-      new DataView(frame.buffer, frame.byteOffset + offset).setUint16(
-        0,
-        payloadLength
-      )
+      new DataView(frame.buffer, frame.byteOffset + offset).setUint16(0, payloadLength)
       offset += 2
     } else {
-      new DataView(frame.buffer, frame.byteOffset + offset).setBigUint64(
-        0,
-        BigInt(payloadLength)
-      )
+      new DataView(frame.buffer, frame.byteOffset + offset).setBigUint64(0, BigInt(payloadLength))
       offset += 8
     }
   }
