@@ -1,10 +1,12 @@
 /**
- * WebSocket Stream Server
+ * @author MAKS11060
+ *
+ * Implementation of WebSocketStream server
+ * Based on WebStream API
  *
  * https://datatracker.ietf.org/doc/html/rfc6455
  * https://datatracker.ietf.org/doc/html/rfc6455#section-5.2
  *
- * @module
  */
 
 import {
@@ -13,7 +15,7 @@ import {
   acceptWebSocket,
   createWebSocketFrame,
   readFrame,
-  unmask
+  unmask,
 } from './ws-utils.ts'
 
 const encoder = new TextEncoder()
