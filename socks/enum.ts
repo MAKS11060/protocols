@@ -1,28 +1,54 @@
-import {invert} from 'jsr:@std/collections'
-
-
-export enum CLIENT {
-  VER = 0x05, // SOCKS5
-}
-
-// export enum CLIENT_REQUEST_ {
-// }
-export const CLIENT_REQUEST = {
-  COMMAND: {
-    IPv4: 1,
-    DomainName: 3,
-    IPv6: 4,
-  }
-}as const
-
-console.log(invert(CLIENT_REQUEST.COMMAND))
-
-export enum SERVER {
-  VER = 0x05, // SOCKS5
-}
+export const VER = 0x05
+export const RSV = 0x00
 
 export enum AUTH {
-  NoAuthentication = 0x00,
+  NoAuth = 0x00,
   Password = 0x02,
-  no_supported = 0xff,
+}
+
+export enum ADDR_TYPE {
+  IPv4 = 0x01,
+  IPv6 = 0x04,
+  DomainName = 0x03,
+}
+
+
+export enum CLIENT_CMD {
+  /** TCP connect  */
+  Connect = 0x01,
+  Bind = 0x02,
+  UDPAssociate = 0x03,
+}
+
+export enum SERVER_REPLIES {
+  Succeeded = 0x00,
+  GeneralFailure = 0x01,
+  ConnectionNotAllowedByRuleset = 0x02,
+  NetworkUnreachable = 0x03,
+  HostUnreachable = 0x04,
+  ConnectionRefused = 0x05,
+  TTLExpired = 0x06,
+  CommandNotSupported = 0x07,
+  AddressTypeNotSupport = 0x08,
+}
+
+export const SERVER_RES2 = {
+  RequestGranted: 0x00,
+  GeneralFailure: 0x01,
+  ConnectionNotAllowedByRuleset: 0x02,
+  NetworkUnreachable: 0x03,
+  HostUnreachable: 0x04,
+  ConnectionRefusedByDestinationHost: 0x05,
+  TTLExpired: 0x06,
+  CommandNotSupportedOrProtocolError: 0x07,
+  AddressTypeNotSupported: 0x08,
+} as const
+
+// Internal
+export enum ConnectionState {
+  ClientHello,
+  ClientAuth,
+  ClientRequest,
+  Close,
+  Open,
 }

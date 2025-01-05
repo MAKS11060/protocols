@@ -1,3 +1,5 @@
+import {ADDR_TYPE} from './enum.ts'
+
 const decoder = new TextDecoder()
 
 export const parseAuthPassword = (buf: Uint8Array) => {
@@ -13,9 +15,38 @@ export const parseAuthPassword = (buf: Uint8Array) => {
   }
 }
 
-export const isLocalAddr = (conn: Deno.TcpConn) => {
-  const localAddrs = ['192.168.', '127.0.0.1']
-  return localAddrs.some((addr) => conn.remoteAddr.hostname.startsWith(addr))
+export const parseSocks5Addr = (c: Uint8Array, offset = 3) => {
+  const view = new DataView(c.buffer, offset)
+  const type = view.getUint8(0) as ADDR_TYPE
+
+  if (type === ADDR_TYPE.IPv4) {
+    return {
+      transport: 'tcp',
+      hostname: `${view.getUint8(1)}.${view.getUint8(2)}.${view.getUint8(3)}.${view.getUint8(4)}`,
+      port: view.getUint16(5),
+    } satisfies Deno.NetAddr & {transport: 'tcp'}
+  } else if (type === ADDR_TYPE.IPv6) {
+    const ipv6Address = Array.from({length: 16}, (_, i) =>
+      view
+        .getUint8(1 + i)
+        .toString(16)
+        .padStart(2, '0')
+    ).join(':')
+    return {
+      transport: 'tcp',
+      hostname: ipv6Address,
+      port: view.getUint16(17),
+    } satisfies Deno.NetAddr & {transport: 'tcp'}
+  } else if (type === ADDR_TYPE.DomainName) {
+    const len = view.getUint8(1)
+    return {
+      transport: 'tcp',
+      hostname: decoder.decode(new Uint8Array(c.buffer, c.byteOffset + offset + 2, len)),
+      port: view.getUint16(offset + 2 + len),
+    } satisfies Deno.NetAddr & {transport: 'tcp'}
+  }
+
+  throw new Error('Invalid ADDR type')
 }
 
 export const getBndAddr = () => {
@@ -28,4 +59,9 @@ export const getBndAddr = () => {
   }
 
   return bndAddr
+}
+
+export const isLocalAddr = (conn: Deno.TcpConn) => {
+  const localAddrs = ['192.168.', '127.0.0.1']
+  return localAddrs.some((addr) => conn.remoteAddr.hostname.startsWith(addr))
 }
