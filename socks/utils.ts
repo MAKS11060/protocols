@@ -49,6 +49,20 @@ export const parseSocks5Addr = (c: Uint8Array, offset = 3) => {
   throw new Error('Invalid ADDR type')
 }
 
+export const bndAddr = (addr: string, port: number) => {
+  return {
+    addr: new Uint8Array(addr.split('.').map((octet) => parseInt(octet))),
+    port: new Uint8Array([(port >> 8) & 0xff, port & 0xff]),
+  }
+}
+
+export const bndAddrFromNetAddr = ({hostname: addr, port}: Deno.NetAddr) => {
+  return {
+    addr: new Uint8Array(addr.split('.').map((octet) => parseInt(octet))),
+    port: new Uint8Array([(port >> 8) & 0xff, port & 0xff]),
+  }
+}
+
 export const getBndAddr = () => {
   const bndAddr = new Uint8Array(4)
   for (const {address} of Deno.networkInterfaces()) {

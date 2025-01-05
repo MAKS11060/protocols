@@ -3,23 +3,16 @@
 import {copy} from 'jsr:@std/io/copy'
 import {serveTcp} from '../utils.ts'
 import {ConnectionState} from './enum.ts'
-import {acceptSocks5} from './socks5-server.ts'
-import {getBndAddr} from "./utils.ts"
+import {upgradeSocks5} from './socks5.ts'
+import {bndAddr, bndAddrFromNetAddr} from './utils.ts'
 
-const bndAddr = getBndAddr() // [127, 0, 0, 1]
+const bnd = bndAddr('127.0.0.1', 40443)
+console.log(bnd)
 
 serveTcp({port: 40443}, async (conn) => {
   try {
-    const socks5 = await acceptSocks5(conn, bndAddr, conn.localAddr.port /* 40443 ??? */, {
-      noAuth: true,
-      auth: {
-        password(cred) {
-          return true
-        },
-      },
-    })
-    if (!socks5) throw new Error('SOCKS5 err')
-    // if (socks5.state === ConnectionState.Close) throw new Error('Socks5 closed')
+    const socks5 = await upgradeSocks5(conn, bndAddrFromNetAddr(conn.localAddr))
+    if (!socks5) throw new Error('SOCKS5 upgrade failed')
 
     console.log(
       `${ConnectionState[socks5.state]} %c${conn.remoteAddr.hostname} %c-> %c${
@@ -29,20 +22,20 @@ serveTcp({port: 40443}, async (conn) => {
       'color: inherit',
       'color: orange'
     )
-    const {distConn} = socks5
 
-    const res = await Promise.all([copy(conn, distConn), copy(distConn, conn)]).catch((e) => {
-      if (e instanceof Deno.errors.ConnectionReset) {
-        console.error(e.message)
-      } else {
-        console.error(e)
-      }
-    })
-
-    if (res) console.log('close conn', {tx: res[0], rx: res[1]})
-    else console.log('close conn')
+    const metric = await Promise.all([
+      // client -> server
+      copy(conn, socks5.distConn),
+      // server -> client
+      copy(socks5.distConn, conn),
+    ])
+    metric // Statistic
+      ? console.log('close conn', {RX: metric[1], TX: metric[0]})
+      : console.log('close conn')
   } catch (e) {
-    if (e instanceof Error) {
+    if (e instanceof Deno.errors.ConnectionReset) {
+      console.error(e.message)
+    } else if (e instanceof Error) {
       console.error(e.message)
     } else {
       console.error(e)

@@ -9,7 +9,6 @@
  * https://en.wikipedia.org/wiki/SOCKS#SOCKS5
  */
 
-import {printBuf} from '../deps.ts'
 import {ADDR_TYPE, AUTH, CLIENT_CMD, ConnectionState, RSV, SERVER_REPLIES, VER} from './enum.ts'
 import {parseAuthPassword, parseSocks5Addr} from './utils.ts'
 
@@ -17,7 +16,6 @@ const acceptAuthMethod = (authType: AUTH | number = 0xff) => new Uint8Array([VER
 
 const authGranted = (status = true) => new Uint8Array([0x01, status ? 0x00 : 0x01])
 
-// const acceptConn = (type: SERVER_REPLIES) => new Uint8Array([VER, type])
 const acceptConn = (
   options:
     | {
@@ -40,15 +38,16 @@ const acceptConn = (
       ...options.bndPort,
     ])
   }
+
   return new Uint8Array([VER, options.type])
 }
 
-acceptConn2({type: SERVER_REPLIES.AddressTypeNotSupport})
-
-export const acceptSocks5 = async (
+export const upgradeSocks5 = async (
   conn: TransformStream<Uint8Array, Uint8Array>,
-  bndAddr: Uint8Array,
-  localPort: number,
+  bnd: {
+    addr: Uint8Array
+    port: Uint8Array
+  },
   options?: {
     noAuth?: boolean
     auth?: {
@@ -66,12 +65,11 @@ export const acceptSocks5 = async (
     if (state === ConnectionState.Close) break
     if (state === ConnectionState.ClientHello) {
       const view = new DataView(c.buffer)
-      printBuf(c)
 
       // VER
       if (view.getUint8(0) !== VER) {
         state = ConnectionState.Close
-        await writer.write(acceptConn({type: SERVER_REPLIES.GeneralFailure}))
+        await writer.write(acceptConn({type: SERVER_REPLIES.CommandNotSupported}))
         await writer.close()
         return
       }
@@ -111,21 +109,21 @@ export const acceptSocks5 = async (
       // VER
       if (view.getUint8(0) !== VER) {
         state = ConnectionState.Close
-        await writer.write(acceptConn({type: SERVER_REPLIES.GeneralFailure}))
+        await writer.write(acceptConn({type: SERVER_REPLIES.CommandNotSupported}))
         await writer.close()
         return
       }
       // CMD
       if (view.getUint8(1) !== CLIENT_CMD.Connect) {
         state = ConnectionState.Close
-        await writer.write(acceptConn({type: SERVER_REPLIES.ConnectionNotAllowedByRuleset}))
+        await writer.write(acceptConn({type: SERVER_REPLIES.CommandNotSupported})) // only tcp
         await writer.close()
         return
       }
       // RSV
       if (view.getUint8(2) !== RSV) {
         state = ConnectionState.Close
-        await writer.write(acceptConn({type: SERVER_REPLIES.GeneralFailure}))
+        await writer.write(acceptConn({type: SERVER_REPLIES.CommandNotSupported}))
         await writer.close()
         return
       }
@@ -133,22 +131,19 @@ export const acceptSocks5 = async (
       // DSTADDR + DSTPORT
       const addr = parseSocks5Addr(new Uint8Array(c.buffer, 4))
       if (!addr) {
-        writer.releaseLock()
+        // writer.releaseLock()
         await writer.close()
         throw new Error('Conn close')
       }
 
-      const _localPort = new Uint8Array([(localPort >> 8) & 0xff, localPort & 0xff])
       try {
         const distConn = await Deno.connect(addr)
-
-        // accept conn
         await writer.write(
           acceptConn({
             type: SERVER_REPLIES.Succeeded,
             addrType: ADDR_TYPE.IPv4,
-            bndAddr,
-            bndPort: _localPort,
+            bndAddr: bnd.addr,
+            bndPort: bnd.port,
           })
         )
 
@@ -159,6 +154,7 @@ export const acceptSocks5 = async (
           distConn,
         }
       } catch (e) {
+        await writer.write(acceptConn({type: SERVER_REPLIES.HostUnreachable}))
         if (e instanceof Deno.errors.ConnectionAborted) {
           console.log(e)
         }

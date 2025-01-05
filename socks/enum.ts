@@ -32,19 +32,7 @@ export enum SERVER_REPLIES {
   AddressTypeNotSupport = 0x08,
 }
 
-export const SERVER_RES2 = {
-  RequestGranted: 0x00,
-  GeneralFailure: 0x01,
-  ConnectionNotAllowedByRuleset: 0x02,
-  NetworkUnreachable: 0x03,
-  HostUnreachable: 0x04,
-  ConnectionRefusedByDestinationHost: 0x05,
-  TTLExpired: 0x06,
-  CommandNotSupportedOrProtocolError: 0x07,
-  AddressTypeNotSupported: 0x08,
-} as const
-
-// Internal
+// Internal state
 export enum ConnectionState {
   ClientHello,
   ClientAuth,
