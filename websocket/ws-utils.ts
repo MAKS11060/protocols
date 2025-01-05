@@ -47,7 +47,7 @@ export const acceptWebSocket = async (conn: Deno.Conn | Deno.TlsConn, protocol?:
   }
   const url = new URL(
     path,
-    (isTls ? 'wss://' : 'ws://') + headers.get('host') ?? 'localhost'
+    (isTls ? 'wss://' : 'ws://') + headers.get('host') || 'localhost'
   ).toString()
 
   const key = headers.get('sec-websocket-key')
@@ -169,7 +169,8 @@ export const sendClose = async (conn: Deno.Conn, code = 1000, reason?: string) =
     payload = new Uint8Array(header)
   }
 
-  await conn.write(header)
+  // await conn.write(header)
+  await conn.write(payload)
 }
 
 export const createWebSocketFrame = (

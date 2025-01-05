@@ -13,7 +13,7 @@ import {
   acceptWebSocket,
   createWebSocketFrame,
   readFrame,
-  unmask,
+  unmask
 } from './ws-utils.ts'
 
 const encoder = new TextEncoder()
@@ -125,7 +125,7 @@ const transformDataToWebsocket = () => {
   })
 }
 
-export const handleWebSocketStream = async (conn: Deno.Conn, protocol?: string) => {
+export const upgradeWebSocketStream = async (conn: Deno.Conn, protocol?: string) => {
   const {conn: sock, headers, url} = await acceptWebSocket(conn, protocol)
 
   // socket -> frame -> result

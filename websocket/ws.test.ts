@@ -1,21 +1,11 @@
 #!/usr/bin/env -S deno run -A --watch
 
 import {delay} from 'jsr:@std/async/delay'
-import {handleWebSocketStream} from './ws.ts'
+import {serveTcp} from "../utils.ts"
+import {upgradeWebSocketStream} from './ws.ts'
 
-const serve = async (handler: (conn: Deno.Conn) => void) => {
-  const listener = Deno.listen({port: 8000})
-  for await (const conn of listener) {
-    try {
-      handler(conn)
-    } catch (e) {
-      console.error(e)
-    }
-  }
-}
-
-serve(async (conn: Deno.Conn) => {
-  const {readable, writable} = await handleWebSocketStream(conn)
+serveTcp({port: 8000}, async (conn ) => {
+  const {readable, writable} = await upgradeWebSocketStream(conn)
   const writer = writable.getWriter()
 
   for await (const data of readable) {
