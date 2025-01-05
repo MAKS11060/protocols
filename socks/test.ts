@@ -12,7 +12,6 @@ console.log(bnd)
 serveTcp({port: 40443}, async (conn) => {
   try {
     const socks5 = await upgradeSocks5(conn, bndAddrFromNetAddr(conn.localAddr))
-    if (!socks5) throw new Error('SOCKS5 upgrade failed')
 
     console.log(
       `${ConnectionState[socks5.state]} %c${conn.remoteAddr.hostname} %c-> %c${

@@ -1,4 +1,69 @@
-# Implementation of simple protocols in typescript
+# Pure implementation of network protocols using Deno + Typescript
+
+- [Implementation of simple protocols in typescript](#implementation-of-simple-protocols-in-typescript)
+  - [SOCKS5 Server (RFC 1928)](#socks5-server-rfc-1928)
+  - [WebSocket Stream Server (RFC 6455)](#websocket-stream-server-rfc-6455)
+  - [UPnP Client (RFC 6970)](#upnp-client-rfc-6970)
+    - [Methods](#methods)
+  - [STUN Client (RFC 5389)](#stun-client-rfc-5389)
+
+## [SOCKS5 Server (RFC 1928)](https://datatracker.ietf.org/doc/html/rfc1928)
+
+- [Code Example](socks/test.ts)
+
+```ts
+// socks/test.ts
+serveTcp({port: 40443}, async (conn) => {
+  try {
+    const socks5 = await upgradeSocks5(conn, bndAddrFromNetAddr(conn.localAddr))
+    if (!socks5) throw new Error('SOCKS5 upgrade failed')
+
+    const metric = await Promise.all([
+      // client -> server
+      copy(conn, socks5.distConn),
+      // server -> client
+      copy(socks5.distConn, conn),
+    ])
+    metric // Statistic
+      ? console.log('close conn', {RX: metric[1], TX: metric[0]})
+      : console.log('close conn')
+  } catch (e) {
+    if (e instanceof Error) {
+      console.error(e.message)
+    } else {
+      console.error(e)
+    }
+  }
+})
+```
+
+## [WebSocket Stream Server (RFC 6455)](https://datatracker.ietf.org/doc/html/rfc6455)
+
+Implementing Websocket as a [WebSocketStream](https://github.com/ricea/websocketstream-explainer) server using [StreamApi](https://developer.mozilla.org/en-US/docs/Web/API/Streams_API)
+
+Usage:
+
+```ts
+#!/usr/bin/env -S deno run -A --watch-hmr
+
+import {serveTcp} from 'https://raw.githubusercontent.com/MAKS11060/deno-protocols/main/utils.ts'
+import {upgradeWebSocketStream} from 'https://raw.githubusercontent.com/MAKS11060/deno-protocols/main/websocket/ws.ts'
+
+serveTcp({port: 8000}, async (conn) => {
+  console.log(conn.remoteAddr.hostname)
+
+  const {url, headers, readable, writable} = await upgradeWebSocketStream(conn)
+  console.log(url, headers)
+
+  const writer = writable.getWriter()
+  for await (const msg of readable.values()) {
+    console.log({msg})
+    writer.write(msg) // loopback
+  }
+
+  console.log('[WebSocketStream] Close')
+})
+```
 
 ## [UPnP Client (RFC 6970)](https://datatracker.ietf.org/doc/html/rfc6970)
 
@@ -46,47 +111,4 @@ import {STUN} from 'https://raw.githubusercontent.com/MAKS11060/deno-protocols/m
 const stun = new STUN('stun.l.google.com:19302')
 
 console.log(await stun.getMappedAddress()) // { hostname: "178.68.144.103", port: 49646, family: "IPv4" }
-```
-
-## [WebSocket Stream Server (RFC 6455)](https://datatracker.ietf.org/doc/html/rfc6455)
-
-Implementing Websocket as a [WebSocketStream](https://github.com/ricea/websocketstream-explainer) server using [StreamApi](https://developer.mozilla.org/en-US/docs/Web/API/Streams_API)
-
-Usage:
-
-```ts
-#!/usr/bin/env -S deno run -A --unstable-hmr
-
-import {handleWebSocketStream} from 'https://raw.githubusercontent.com/MAKS11060/deno-protocols/main/websocket/ws.ts'
-
-const serve = async (handler: (conn: Deno.Conn) => Promise<void>) => {
-  const listener = Deno.listen({port: 8000})
-  for await (const conn of listener) {
-    try {
-      handler(conn).catch((e) => {
-        console.error('err', e)
-      })
-    } catch (e) {
-      console.error(e)
-    }
-  }
-}
-
-serve(async (conn) => {
-  const {readable, writable, headers, url} = await handleWebSocketStream(conn)
-  console.log({headers, url})
-  const writer = writable.getWriter()
-  for await (const data of readable) {
-    if (typeof data === 'string') {
-      console.log('server:', data)
-    } else {
-      console.log('server:', data.byteLength)
-    }
-    writer.write(data) // write to client received data
-  }
-  console.log('readable closed')
-
-  writer.releaseLock()
-  writable.close()
-})
 ```

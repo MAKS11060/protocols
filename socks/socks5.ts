@@ -42,18 +42,20 @@ const acceptConn = (
   return new Uint8Array([VER, options.type])
 }
 
+interface Socks5UpgradeOptions {
+  noAuth?: boolean
+  auth?: {
+    password?: (cred: {username: string; password: string}) => Promise<boolean> | boolean
+  }
+}
+
 export const upgradeSocks5 = async (
   conn: TransformStream<Uint8Array, Uint8Array>,
   bnd: {
     addr: Uint8Array
     port: Uint8Array
   },
-  options?: {
-    noAuth?: boolean
-    auth?: {
-      password?: (cred: {username: string; password: string}) => Promise<boolean> | boolean
-    }
-  }
+  options?: Socks5UpgradeOptions
 ) => {
   options ??= {}
 
@@ -71,7 +73,7 @@ export const upgradeSocks5 = async (
         state = ConnectionState.Close
         await writer.write(acceptConn({type: SERVER_REPLIES.CommandNotSupported}))
         await writer.close()
-        return
+        throw new Error('SOCKS5 Upgrade failed')
       }
 
       // TODO
@@ -111,29 +113,29 @@ export const upgradeSocks5 = async (
         state = ConnectionState.Close
         await writer.write(acceptConn({type: SERVER_REPLIES.CommandNotSupported}))
         await writer.close()
-        return
+        throw new Error('SOCKS5 Upgrade failed')
       }
       // CMD
       if (view.getUint8(1) !== CLIENT_CMD.Connect) {
         state = ConnectionState.Close
         await writer.write(acceptConn({type: SERVER_REPLIES.CommandNotSupported})) // only tcp
         await writer.close()
-        return
+        throw new Error('SOCKS5 Upgrade failed')
       }
       // RSV
       if (view.getUint8(2) !== RSV) {
         state = ConnectionState.Close
         await writer.write(acceptConn({type: SERVER_REPLIES.CommandNotSupported}))
         await writer.close()
-        return
+        throw new Error('SOCKS5 Upgrade failed')
       }
 
-      // DSTADDR + DSTPORT
-      const addr = parseSocks5Addr(new Uint8Array(c.buffer, 4))
+      // DST.ADDR + DST.PORT
+      const addr = parseSocks5Addr(c)
       if (!addr) {
         // writer.releaseLock()
         await writer.close()
-        throw new Error('Conn close')
+        throw new Error('SOCKS5 Parse addr error')
       }
 
       try {
@@ -161,4 +163,6 @@ export const upgradeSocks5 = async (
       }
     }
   }
+
+  throw new Error('SOCKS5 Upgrade failed', {cause: 'Readable end'})
 }
