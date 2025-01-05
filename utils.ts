@@ -1,6 +1,6 @@
 /**
  * @example
- * serveTcp({key, cert, port: 80}, async (conn) => {
+ * serveTcp({port: 80}, async (conn) => {
  *   console.log(conn.remoteAddr)
  *   conn.close()
  * })
