@@ -9,7 +9,7 @@
 
 ## [SOCKS5 Server (RFC 1928)](https://datatracker.ietf.org/doc/html/rfc1928)
 
-- [Code Example](socks/test.ts)
+- [Full Example](socks/socks5.test.ts)
 
 ```ts
 // socks/test.ts
@@ -29,7 +29,7 @@ serveTcp({port: 40443}, async (conn) => {
       : console.log('close conn')
   } catch (e) {
     if (e instanceof Error) {
-      console.error(e.message)
+      console.error(e.name, e.message)
     } else {
       console.error(e)
     }

@@ -10,7 +10,7 @@
  */
 
 import {ADDR_TYPE, AUTH, CLIENT_CMD, ConnectionState, RSV, SERVER_REPLIES, VER} from './enum.ts'
-import {parseAuthPassword, parseSocks5Addr} from './utils.ts'
+import {isLocalAddr, parseAuthPassword, parseSocks5Addr} from './utils.ts'
 
 const acceptAuthMethod = (authType: AUTH | number = 0xff) => new Uint8Array([VER, authType])
 
@@ -43,10 +43,10 @@ const acceptConn = (
 }
 
 interface Socks5UpgradeOptions {
+  /** @default true */
+  restrictLocal?: boolean
+  password?: (cred: {username: string; password: string}) => Promise<boolean> | boolean
   noAuth?: boolean
-  auth?: {
-    password?: (cred: {username: string; password: string}) => Promise<boolean> | boolean
-  }
 }
 
 export const upgradeSocks5 = async (
@@ -58,12 +58,17 @@ export const upgradeSocks5 = async (
   options?: Socks5UpgradeOptions
 ) => {
   options ??= {}
+  options.restrictLocal ??= true
+  options.noAuth ??= !options.password
 
   const writer = conn.writable.getWriter()
 
   let state: ConnectionState = ConnectionState.ClientHello
+  let authMethods: AUTH[] = []
+  // let authMethod: AUTH | undefined // TODO: used for more authentication methods
 
   for await (const c of conn.readable.values({preventCancel: true})) {
+    // console.log(`state: %c${ConnectionState[state]}`, 'color: orange')
     if (state === ConnectionState.Close) break
     if (state === ConnectionState.ClientHello) {
       const view = new DataView(c.buffer)
@@ -76,29 +81,41 @@ export const upgradeSocks5 = async (
         throw new Error('SOCKS5 Upgrade failed')
       }
 
-      // TODO
       // AuthN
-      /* const authN = view.getUint8(1) // auth method count
-      const authMethods: any[] = []
+      const authN = view.getUint8(1) // auth methods count
       for (let i = 0; i < authN; i++) {
-        authMethods.push
-      } */
+        const method = view.getUint8(i + 2)
+        if (AUTH[method]) authMethods.push(method)
+      }
 
-      if (!options.auth || options.noAuth) {
+      // Choice auth
+      if (options.noAuth && authMethods.includes(AUTH.NoAuth)) {
         await writer.write(acceptAuthMethod(AUTH.NoAuth))
         state = ConnectionState.ClientRequest
-      } else if (options.auth.password) {
+      }
+      // Use password
+      else if (options.password && authMethods.includes(AUTH.Password)) {
         await writer.write(acceptAuthMethod(AUTH.Password))
         state = ConnectionState.ClientAuth
       }
+      // Not supported auth methods
+      else {
+        await writer.write(acceptAuthMethod())
+        state = ConnectionState.Close
+      }
     } else if (state === ConnectionState.ClientAuth) {
-      const cred = parseAuthPassword(c)
-
-      if (options.auth?.password) {
+      // skip any methods
+      if (options.noAuth) {
+        await writer.write(authGranted())
+        state = ConnectionState.ClientRequest
+      }
+      // Check password
+      else if (options.password && authMethods.includes(AUTH.Password)) {
+        const cred = parseAuthPassword(c)
         const granted =
-          options.auth.password.constructor.name === 'Function'
-            ? (options.auth.password(cred) as boolean)
-            : await options.auth.password(cred)
+          options.password.constructor.name === 'Function'
+            ? (options.password(cred) as boolean)
+            : await options.password(cred)
 
         await writer.write(authGranted(granted))
         state = granted //
@@ -138,8 +155,28 @@ export const upgradeSocks5 = async (
         throw new Error('SOCKS5 Parse addr error')
       }
 
+      // console.log(addr)
+      // if (addr.type === ADDR_TYPE.IPv6) {
+      //   throw new Error('SOCKS5 Upgrade failed', {cause: 'IPv6 addr not supported'})
+      // }
+
       try {
-        const distConn = await Deno.connect(addr)
+        const distConn =
+          addr.type === ADDR_TYPE.IPv6 // Not tested
+            ? await Deno.connect({...addr, hostname: `[${addr.hostname}]`}) // wrap IPv6
+            : await Deno.connect(addr)
+
+        if (options.restrictLocal && isLocalAddr(distConn.remoteAddr)) {
+          console.error(
+            `%cRestrict: ${distConn.remoteAddr.hostname} to ${addr.hostname}:${addr.port}`,
+            'color:red'
+          )
+          distConn.close()
+          state = ConnectionState.Close
+          await writer.write(acceptConn({type: SERVER_REPLIES.ConnectionNotAllowedByRuleset}))
+          throw new Error('SOCKS5 Upgrade failed', {cause: 'ConnectionNotAllowedByRuleset'})
+        }
+
         await writer.write(
           acceptConn({
             type: SERVER_REPLIES.Succeeded,
@@ -150,15 +187,13 @@ export const upgradeSocks5 = async (
         )
 
         state = ConnectionState.Open
-        return {
-          state,
-          addr,
-          distConn,
-        }
+
+        return {state, addr, distConn}
       } catch (e) {
+        state = ConnectionState.Close
         await writer.write(acceptConn({type: SERVER_REPLIES.HostUnreachable}))
-        if (e instanceof Deno.errors.ConnectionAborted) {
-          console.log(e)
+        if (e instanceof Error) {
+          console.error(e.name, e.message)
         }
       }
     }
