@@ -1,11 +1,15 @@
-# Pure implementation of network protocols using Deno + Typescript
+# Implementation of protocols in TypeScript using modern Web API
 
-- [Implementation of simple protocols in typescript](#implementation-of-simple-protocols-in-typescript)
-  - [SOCKS5 Server (RFC 1928)](#socks5-server-rfc-1928)
-  - [WebSocket Stream Server (RFC 6455)](#websocket-stream-server-rfc-6455)
-  - [UPnP Client (RFC 6970)](#upnp-client-rfc-6970)
-    - [Methods](#methods)
-  - [STUN Client (RFC 5389)](#stun-client-rfc-5389)
+- [SOCKS5 Server (RFC 1928)](#socks5-server-rfc-1928)
+- [WebSocket Stream Server (RFC 6455)](#websocket-stream-server-rfc-6455)
+- [UPnP Client (RFC 6970)](#upnp-client-rfc-6970)
+  - [Methods](#methods)
+- [STUN Client (RFC 5389)](#stun-client-rfc-5389)
+
+## Features
+- Based on [Web Stream API](https://developer.mozilla.org/en-US/docs/Web/API/Streams_API)
+- Using [`@std/`](https://jsr.io/@std)
+
 
 ## [SOCKS5 Server (RFC 1928)](https://datatracker.ietf.org/doc/html/rfc1928)
 
@@ -30,8 +34,6 @@ serveTcp({port: 40443}, async (conn) => {
   } catch (e) {
     if (e instanceof Error) {
       console.error(e.name, e.message)
-    } else {
-      console.error(e)
     }
   }
 })
